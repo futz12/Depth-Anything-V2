@@ -123,8 +123,8 @@ class DPTHead(nn.Module):
                 x = self.readout_projects[i](torch.cat((x, readout), -1))
             else:
                 x = x[0]
-            
-            x = x.permute(0, 2, 1).reshape((x.shape[0], x.shape[-1], patch_h, patch_w))
+
+            x = x.permute(0, 2, 1).reshape(x.shape[0], x.shape[-1], patch_h, patch_w)
             
             x = self.projects[i](x)
             x = self.resize_layers[i](x)
@@ -144,7 +144,7 @@ class DPTHead(nn.Module):
         path_1 = self.scratch.refinenet1(path_2, layer_1_rn)
         
         out = self.scratch.output_conv1(path_1)
-        out = F.interpolate(out, (int(patch_h * 14), int(patch_w * 14)), mode="bilinear", align_corners=True)
+        out = F.interpolate(out, (patch_h * 14, patch_w * 14), mode="bilinear", align_corners=True)
         out = self.scratch.output_conv2(out)
         
         return out
@@ -215,7 +215,7 @@ class DepthAnythingV2(nn.Module):
         image = transform({'image': image})['image']
         image = torch.from_numpy(image).unsqueeze(0)
         
-        DEVICE = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+        DEVICE = 'cpu'
         image = image.to(DEVICE)
         
         return image, (h, w)

@@ -176,38 +176,42 @@ class DinoVisionTransformer(nn.Module):
             nn.init.normal_(self.register_tokens, std=1e-6)
         named_apply(init_weights_vit_timm, self)
 
-    def interpolate_pos_encoding(self, x, w, h):
-        previous_dtype = x.dtype
+    def interpolate_pos_encoding(self, x: torch.Tensor, w: int, h: int) -> torch.Tensor:
         npatch = x.shape[1] - 1
         N = self.pos_embed.shape[1] - 1
         if npatch == N and w == h:
             return self.pos_embed
-        pos_embed = self.pos_embed.float()
+
+        pos_embed = self.pos_embed
         class_pos_embed = pos_embed[:, 0]
         patch_pos_embed = pos_embed[:, 1:]
         dim = x.shape[-1]
+
         w0 = w // self.patch_size
         h0 = h // self.patch_size
-        # we add a small number to avoid floating point error in the interpolation
-        # see discussion at https://github.com/facebookresearch/dino/issues/8
-        # DINOv2 with register modify the interpolate_offset from 0.1 to 0.0
-        w0, h0 = w0 + self.interpolate_offset, h0 + self.interpolate_offset
-        # w0, h0 = w0 + 0.1, h0 + 0.1
-        
+
+        target_size: Tuple[int, int] = (w0, h0)
+
         sqrt_N = math.sqrt(N)
-        sx, sy = float(w0) / sqrt_N, float(h0) / sqrt_N
+        # 确保 sqrt_N 是整数，否则 reshape 会失败
+        if int(sqrt_N) * int(sqrt_N) != N:
+            raise ValueError("Expected pos_embed to have a square number of patches.")
+
+        patch_pos_embed = patch_pos_embed.reshape(1, int(sqrt_N), int(sqrt_N), dim).permute(0, 3, 1, 2)
+
         patch_pos_embed = nn.functional.interpolate(
-            patch_pos_embed.reshape(1, int(sqrt_N), int(sqrt_N), dim).permute(0, 3, 1, 2),
-            scale_factor=(sx, sy),
-            # (int(w0), int(h0)), # to solve the upsampling shape issue
+            patch_pos_embed,
+            size=target_size,
             mode="bicubic",
-            antialias=self.interpolate_antialias
+            antialias=self.interpolate_antialias,
         )
-        
-        assert int(w0) == patch_pos_embed.shape[-2]
-        assert int(h0) == patch_pos_embed.shape[-1]
+
+        assert target_size[0] == patch_pos_embed.shape[-2]
+        assert target_size[1] == patch_pos_embed.shape[-1]
+
         patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
-        return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1).to(previous_dtype)
+
+        return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
 
     def prepare_tokens_with_masks(self, x, masks=None):
         B, nc, w, h = x.shape
@@ -309,7 +313,7 @@ class DinoVisionTransformer(nn.Module):
         if norm:
             outputs = [self.norm(out) for out in outputs]
         class_tokens = [out[:, 0] for out in outputs]
-        outputs = [out[:, 1 + self.num_register_tokens:] for out in outputs]
+        outputs = [out[:, 1 + self.num_register_tokens:out.shape[1]] for out in outputs]
         if reshape:
             B, _, w, h = x.shape
             outputs = [
